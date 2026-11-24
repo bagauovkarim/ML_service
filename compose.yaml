@@ -1,0 +1,23 @@
+services:
+  inference:
+    build: .
+    image: bank-marketing-service:local
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:${INFERENCE_HOST_PORT}:8000"
+    volumes:
+      - "./${MODEL_REGISTRY_DIR}:/app/${MODEL_REGISTRY_DIR}"
+    restart: unless-stopped
+  train:
+    image: bank-marketing-service:local
+    profiles: ["train"]
+    command: ["uv", "run", "python", "-m", "bank_marketing_service.train"]
+    env_file:
+      - .env
+    volumes:
+      - "./${MODEL_REGISTRY_DIR}:/app/${MODEL_REGISTRY_DIR}"
+      - "./data:/app/data:ro"
+    depends_on:
+      - inference
+  
