@@ -8,14 +8,17 @@ from bank_marketing_service.registry import read_active_model_name, save_active_
 from bank_marketing_service.schemas import ModelSwitchRequest
 
 
-def test_invalid_new_model_preserves_active_model(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_REGISTRY_DIR", str(tmp_path))
+def test_invalid_new_model_preserves_active_model(tmp_path):
     (tmp_path / "old.joblib").write_bytes(b"old model")
     (tmp_path / "broken.joblib").write_bytes(b"not a joblib file")
     save_active_model_name(tmp_path, "old.joblib")
 
     old_model = object()
-    state = SimpleNamespace(model=old_model, model_name="old.joblib")
+    state = SimpleNamespace(
+        model=old_model,
+        model_name="old.joblib",
+        settings=SimpleNamespace(model_registry_dir=tmp_path),
+    )
     request = SimpleNamespace(app=SimpleNamespace(state=state))
 
     with pytest.raises(HTTPException) as error:
@@ -27,13 +30,12 @@ def test_invalid_new_model_preserves_active_model(tmp_path, monkeypatch):
     assert read_active_model_name(tmp_path) == "old.joblib"
 
 
-def test_valid_new_model_updates_pointer_and_running_model(tmp_path, monkeypatch):
+def test_valid_new_model_updates_pointer_and_running_model(tmp_path):
     import joblib
     import numpy as np
     from sklearn.dummy import DummyClassifier
     from sklearn.pipeline import Pipeline
 
-    monkeypatch.setenv("MODEL_REGISTRY_DIR", str(tmp_path))
     (tmp_path / "old.joblib").write_bytes(b"old model")
     save_active_model_name(tmp_path, "old.joblib")
     new_model = Pipeline([("classifier", DummyClassifier(strategy="most_frequent"))])
@@ -41,7 +43,11 @@ def test_valid_new_model_updates_pointer_and_running_model(tmp_path, monkeypatch
     joblib.dump(new_model, tmp_path / "new.joblib")
 
     old_model = object()
-    state = SimpleNamespace(model=old_model, model_name="old.joblib")
+    state = SimpleNamespace(
+        model=old_model,
+        model_name="old.joblib",
+        settings=SimpleNamespace(model_registry_dir=tmp_path),
+    )
     request = SimpleNamespace(app=SimpleNamespace(state=state))
     response = inference.switch_model(ModelSwitchRequest(model_name="new.joblib"), request)
 
@@ -93,13 +99,10 @@ def test_prediction_uses_shared_preprocessing_and_positive_class_probability():
     assert model.predict_proba.call_args.args[0] is prepared
 
 
-def test_empty_registry_starts_without_model_and_reports_unavailable(tmp_path, monkeypatch):
+def test_empty_registry_starts_without_model_and_reports_unavailable(service_env):
     import asyncio
     from fastapi import FastAPI
 
-    monkeypatch.setenv("LOG_LEVEL", "INFO")
-    monkeypatch.setenv("MODEL_REGISTRY_DIR", str(tmp_path))
-    monkeypatch.setenv("ACTIVE_MODEL_PATH", "")
     app = FastAPI()
 
     async def check_startup():
@@ -110,3 +113,22 @@ def test_empty_registry_starts_without_model_and_reports_unavailable(tmp_path, m
             assert error.value.status_code == 503
 
     asyncio.run(check_startup())
+
+
+def test_activate_endpoint_accepts_model_name_without_settings_in_json(service_env):
+    import joblib
+    import numpy as np
+    from fastapi.testclient import TestClient
+    from sklearn.dummy import DummyClassifier
+    from sklearn.pipeline import Pipeline
+
+    model = Pipeline([("classifier", DummyClassifier(strategy="most_frequent"))])
+    model.fit(np.array([[0], [1]]), np.array([0, 1]))
+    joblib.dump(model, service_env / "new.joblib")
+
+    with TestClient(inference.app) as client:
+        response = client.post("/models/activate", json={"model_name": "new.joblib"})
+
+    assert response.status_code == 200
+    assert response.json() == {"active_model": "new.joblib"}
+    assert read_active_model_name(service_env) == "new.joblib"

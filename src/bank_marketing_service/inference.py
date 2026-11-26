@@ -11,18 +11,23 @@ from sklearn.pipeline import Pipeline
 from sklearn.utils.validation import check_is_fitted
 from sklearn.exceptions import NotFittedError
 from pathlib import Path
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from bank_marketing_service.settings import Settings
 
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logging.basicConfig(level=os.environ["LOG_LEVEL"])
-    registry_dir = os.environ["MODEL_REGISTRY_DIR"]
+    settings = Settings()
+    app.state.settings = settings
+    logging.basicConfig(level=settings.log_level)
+    registry_dir = settings.model_registry_dir
     app.state.model = None
     app.state.model_name = None
     try:
         saved_name = read_active_model_name(registry_dir)
-        configured_path = os.environ.get("ACTIVE_MODEL_PATH", "").strip()
+        configured_path = settings.active_model_path.strip()
         if saved_name is not None:
             path = get_model_path(registry_dir, saved_name)
         elif configured_path:
@@ -49,6 +54,18 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    errors = []
+
+    for error in exc.errors():
+        errors.append({
+            "loc": list(error["loc"]),
+            "msg": error["msg"],
+            "type": error["type"],
+        })
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 @app.get("/health")
 def health(request: Request):
@@ -82,8 +99,9 @@ def predict(payload: PredictionRequest, request: Request):
 
 @app.post("/models/activate")
 def switch_model(payload: ModelSwitchRequest, request: Request):
+    settings = request.app.state.settings
     try:
-        model_path = get_model_path(os.environ["MODEL_REGISTRY_DIR"], payload.model_name)
+        model_path = get_model_path(settings.model_registry_dir, payload.model_name)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid model name")
     except FileNotFoundError:
@@ -106,7 +124,7 @@ def switch_model(payload: ModelSwitchRequest, request: Request):
         raise HTTPException(status_code=500, detail="Model is not fitted")
 
     try:
-        save_active_model_name(os.environ["MODEL_REGISTRY_DIR"], payload.model_name)
+        save_active_model_name(settings.model_registry_dir, payload.model_name)
     except OSError:
         logger.exception("Failed to save active model: %s", payload.model_name)
         raise HTTPException(status_code=500, detail="Failed to save active model")

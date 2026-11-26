@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from bank_marketing_service import train
+from bank_marketing_service.settings import Settings
 
 
 @pytest.fixture
@@ -19,6 +20,12 @@ def training_dependencies(monkeypatch, tmp_path):
         "MODEL_L1_RATIO": "1.0",
         "MIN_ROC_AUC": "0.65",
         "MODEL_REGISTRY_DIR": str(tmp_path),
+        "LOG_LEVEL": "INFO",
+        "ACTIVE_MODEL_PATH": "",
+        "ACTIVATION_MAX_ATTEMPTS": "3",
+        "ACTIVATION_RETRY_DELAY_SECONDS": "0",
+        "INFERENCE_URL": "http://inference:8000",
+        "INFERENCE_TIMEOUT_SECONDS": "1",
     }
     for name, value in settings.items():
         monkeypatch.setenv(name, value)
@@ -59,4 +66,8 @@ def test_passing_auc_saves_and_activates_model(training_dependencies):
 
     save_model.assert_called_once()
     assert save_model.call_args.args[0] is pipeline
-    activate_inference.assert_called_once_with(save_model.return_value)
+    activate_inference.assert_called_once()
+    model_path, passed_settings = activate_inference.call_args.args
+    assert model_path == save_model.return_value
+    assert isinstance(passed_settings, Settings)
+    assert passed_settings.model_registry_dir == save_model.call_args.args[1]

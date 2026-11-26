@@ -2,11 +2,11 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import Literal
 
 class PredictionRequest(BaseModel):
-    model_config=ConfigDict(extra="forbid")
-    age: int
-    campaign: int
-    pdays: int
-    previous: int
+    model_config=ConfigDict(extra="forbid", allow_inf_nan=False)
+    age: int = Field(ge=17, le=120)
+    campaign: int = Field(ge=1)
+    pdays: int = Field(ge=0)
+    previous: int = Field(ge=0)
     euribor3m: float
     emp_var_rate: float = Field(alias="emp.var.rate")
     cons_price_idx: float = Field(alias="cons.price.idx")

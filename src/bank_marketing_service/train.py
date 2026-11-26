@@ -9,21 +9,25 @@ import logging
 import os
 import requests
 import time
+from bank_marketing_service.settings import Settings
 
 logger = logging.getLogger(__name__)
 
 
 def main():
-    X, y = load_training_data(os.environ["TRAIN_DATA_PATH"])
+    settings = Settings()
+    logging.basicConfig(level=settings.log_level)
+
+    X, y = load_training_data(settings.train_data_path)
 
     X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=float(os.environ["VALIDATION_SIZE"]), shuffle=False
+        X, y, test_size=settings.validation_size, shuffle=False
     )
 
     pipeline = Pipeline([
         ("prep", get_preprocessor_scaled()),
-        ("model", LogisticRegression(random_state=int(os.environ["MODEL_RANDOM_STATE"]), C=float(os.environ["MODEL_C"]), 
-                                     solver=os.environ["MODEL_SOLVER"], max_iter=int(os.environ["MODEL_MAX_ITER"]), l1_ratio=float(os.environ["MODEL_L1_RATIO"])))
+        ("model", LogisticRegression(random_state=settings.model_random_state, C=settings.model_c,           
+                                     solver=settings.model_solver, max_iter=settings.model_max_iter, l1_ratio=settings.model_l1_ratio))
     ])
 
     pipeline.fit(X_train, y_train)
@@ -32,7 +36,7 @@ def main():
 
     auc = roc_auc_score(y_val, probs)
 
-    threshhold = float(os.environ["MIN_ROC_AUC"])
+    threshhold = settings.min_roc_auc
 
     logger.info("Validation ROC-AUC: %.3f; minimum: %.3f", auc, threshhold)
 
@@ -42,28 +46,23 @@ def main():
 
     logger.info("Model passed validation")
 
-    model_path = save_model(pipeline, os.environ["MODEL_REGISTRY_DIR"])
+    model_path = save_model(pipeline, settings.model_registry_dir)
     logger.info("Model saved: %s", model_path)
-    activate_inference(model_path)
+    activate_inference(model_path, settings)
     logger.info("Model switched: %s", model_path)
 
 
 
-def activate_inference(model_path):
-    max_attempts = int(os.environ["ACTIVATION_MAX_ATTEMPTS"])
-    delay_seconds = float(os.environ["ACTIVATION_RETRY_DELAY_SECONDS"])
+def activate_inference(model_path, settings: Settings):
+    max_attempts = settings.activation_max_attempts
+    delay_seconds = settings.activation_retry_delay_seconds
 
 
-    url = os.environ["INFERENCE_URL"].rstrip("/") + "/models/activate"
-
-    if max_attempts < 1:
-        raise ValueError("ACTIVATION_MAX_ATTEMPTS must be at least 1")
-    if delay_seconds < 0:
-        raise ValueError("ACTIVATION_RETRY_DELAY_SECONDS cannot be negative")
+    url = str(settings.inference_url).rstrip("/") + "/models/activate"
 
     for attempt in range(1, max_attempts + 1):
         try:
-            response = requests.post(url, json={"model_name": model_path.name}, timeout=float(os.environ["INFERENCE_TIMEOUT_SECONDS"]))
+            response = requests.post(url, json={"model_name": model_path.name}, timeout=settings.inference_timeout_seconds)
             response.raise_for_status()
             return
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
@@ -79,5 +78,4 @@ def activate_inference(model_path):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=os.environ["LOG_LEVEL"])
     main()
